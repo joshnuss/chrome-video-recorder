@@ -1,15 +1,20 @@
 # Chrome Video Recorder
 
-Record browser and output high-quality video.
+Record browser and outputs high-quality video.
 
 ## Features
 
-- Quality over speed.
 - 4K support.
-- 120 fps framerate.
+- 120+ fps framerate.
 - Avoids FOCs. Waits for CSS, fonts and images to load.
 - Prevents CPU slowdowns from creating laggy videos.
 - Runs headless.
+
+## Playwright Comparison
+
+This CLI produces more predictable frames and timing than Playwright’s real-time video recording.
+
+It seeks animations to exact timestamps and captures every frame, so a 10-second video at 120 FPS contains 1,200 frames—even if rendering takes longer on a slower machine.
 
 ## Setup
 

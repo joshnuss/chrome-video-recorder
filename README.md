@@ -7,7 +7,7 @@ Record browser and outputs high-quality video.
 - 4K support.
 - 120+ fps framerate.
 - Avoids FOCs. Waits for CSS, fonts and images to load.
-- Prevents CPU slowdowns from creating laggy videos.
+- Avoids lags. Prevents CPU slowdowns from causing laggy videos.
 - Runs headless.
 
 ## Playwright Comparison

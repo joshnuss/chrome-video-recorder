@@ -8,6 +8,7 @@ import type { RenderOptions } from './options.js';
 
 import { createLogger, type Logger } from './progress.js';
 import { withCleanup } from './cleanup.js';
+import { navigate } from './navigation.js';
 
 interface OutputPaths {
   video: string;
@@ -78,7 +79,7 @@ async function captureWithChrome(
 }
 
 async function preparePage(page: Page, source: string): Promise<JSHandle<Animation[]>> {
-  await page.goto(source, { waitUntil: 'load' });
+  await navigate(page, source);
   await page.evaluate(async () => {
     await document.fonts.ready;
     await Promise.all(Array.from(document.images, image => image.decode().catch(() => {})));

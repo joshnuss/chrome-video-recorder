@@ -85,3 +85,16 @@ test('requires an explicit source and rejects ambiguous URL arguments', async ()
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).source, 'https://example.com/');
 });
+
+test('JSON progress formats validation failures and leaves dry-run stdout as JSON', () => {
+  const invalid = run(['--json-progress', '--fps', '0']);
+  assert.equal(invalid.status, 1);
+  assert.equal(invalid.stdout, '');
+  const error = JSON.parse(invalid.stderr);
+  assert.equal(error.type, 'error');
+  assert.match(error.message, /--fps/);
+  const plan = run(['--url', 'http://localhost:5173', '--json-progress', '--dry-run']);
+  assert.equal(plan.status, 0);
+  assert.equal(plan.stderr, '');
+  assert.equal(JSON.parse(plan.stdout).frames, 1200);
+});

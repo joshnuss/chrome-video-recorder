@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { parseOptions } from './options.js';
+import { createLogger } from './progress.js';
 
 const help = `Usage: chrome-video-recorder --url <URL> [options]
        chrome-video-recorder <URL | HTML_FILE> [options]
@@ -18,6 +19,7 @@ Options:
   -o, --output <dir>     Output directory (default: ./videos)
   --headed              Show Chrome while rendering
   --keep-frames         Keep the individual PNG screenshots
+  --json-progress       Write newline-delimited JSON events to stderr
   --dry-run             Print the render plan as JSON without launching Chrome
   -h, --help            Show this help
   -v, --version         Show version
@@ -32,14 +34,17 @@ Output names are generated automatically. Rendering may be slower than real time
 Controls existing main-document CSS/WAAPI animations, not JS timers or video.
 `;
 
+let log = createLogger(process.argv.slice(2).includes('--json-progress'));
+
 try {
   const parsed = parseOptions(process.argv.slice(2));
-  if (parsed.help) {
+  if (parsed.kind === 'help') {
     console.log(help);
-  } else if (parsed.version) {
+  } else if (parsed.kind === 'version') {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
     console.log(pkg.version);
-  } else if (parsed.options) {
+  } else {
+    log = createLogger(parsed.jsonProgress);
     if (parsed.dryRun) {
       console.log(JSON.stringify({
         ...parsed.options,
@@ -48,12 +53,12 @@ try {
     } else {
       // Help, version, validation and dry-run do not load Playwright.
       const { render } = await import('./render.js');
-      const output = await render(parsed.options);
+      const output = await render(parsed.options, log);
       // Progress goes to stderr; stdout contains only the finished video path.
       console.log(output);
     }
   }
 } catch (error) {
-  console.error(`chrome-video-recorder: ${error instanceof Error ? error.message : String(error)}`);
+  log(`chrome-video-recorder: ${error instanceof Error ? error.message : String(error)}`, { type: 'error' });
   process.exitCode = 1;
 }

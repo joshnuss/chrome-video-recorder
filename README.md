@@ -54,6 +54,7 @@ chrome-video-recorder \
 | `-o, --output`   | `./videos` | Output directory or path; For directories, filenames are generated |
 | `--headed`       | Off        | Show Chrome                                                        |
 | `--keep-frames`  | Off        | Retain PNG frames                                                  |
+| `--json-progress` | Off | Write JSON events to stderr |
 | `--dry-run`      | Off        | Print settings without rendering                                   |
 | `-h, --help`     |            | Show usage                                                         |
 | `-v, --version`  |            | Show version                                                       |

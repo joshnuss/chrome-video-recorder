@@ -6,7 +6,8 @@ import { randomUUID } from 'node:crypto';
 import { encode } from './encode.js';
 import type { RenderOptions } from './options.js';
 
-type Logger = (message: string) => void;
+import { createLogger, type Logger } from './progress.js';
+import { withCleanup } from './cleanup.js';
 
 interface OutputPaths {
   video: string;
@@ -19,22 +20,24 @@ interface CaptureResult {
   renderSeconds: number;
 }
 
-export async function render(options: RenderOptions, log: Logger = console.error): Promise<string> {
+export async function render(options: RenderOptions, log: Logger = createLogger(false)): Promise<string> {
   checkDependencies();
   const files = await createOutputPaths(options.output);
 
-  try {
+  const output = await withCleanup(async () => {
     const capture = await captureWithChrome(options, files.framesDirectory, log);
-    log(`Captured all ${options.frames} frames in ${capture.renderSeconds.toFixed(1)}s. Encoding...`);
+    log(`Captured all ${options.frames} frames in ${capture.renderSeconds.toFixed(1)}s. Encoding...`, {
+      type: 'progress', phase: 'encoding', framesRendered: options.frames, totalFrames: options.frames,
+    });
     const encodingStarted = performance.now();
     await encode(files.framesDirectory, options.frames, options.fps, files.video);
     const encodingSeconds = (performance.now() - encodingStarted) / 1000;
     await writeReport(options, files.report, capture, encodingSeconds);
-    log(`Saved video: ${files.video}`);
     return files.video;
-  } finally {
-    await cleanupFrames(files.framesDirectory, options.keepFrames, log);
-  }
+  }, () => cleanupFrames(files.framesDirectory, options.keepFrames, log),
+  message => log(message, { type: 'warning' }));
+  log(`Saved video: ${output}`, { type: 'completed', output });
+  return output;
 }
 
 function checkDependencies(): void {
@@ -57,23 +60,21 @@ async function captureWithChrome(
   options: RenderOptions, framesDirectory: string, log: Logger,
 ): Promise<CaptureResult> {
   const browser = await chromium.launch({ channel: 'chrome', headless: !options.headed });
-  try {
+  return withCleanup(async () => {
     const context = await browser.newContext({
       viewport: { width: options.width, height: options.height }, deviceScaleFactor: 1,
     });
     const page = await context.newPage();
     const animations = await preparePage(page, options.source);
     const animationCount = await animations.evaluate(animations => animations.length);
-    if (!animationCount) log('No animations found in the main document; the output may be static.');
-    log(`Rendering ${options.frames} frames: ${options.width} × ${options.height}, ${options.fps} FPS, ${(options.frames / options.fps).toFixed(3)}s video.`);
+    if (!animationCount) log('No animations found in the main document; the output may be static.', { type: 'warning' });
+    log(`Rendering ${options.frames} frames: ${options.width} × ${options.height}, ${options.fps} FPS, ${(options.frames / options.fps).toFixed(3)}s video.`, {
+      type: 'progress', phase: 'starting', framesRendered: 0, totalFrames: options.frames,
+    });
     log(`Seeking ${animationCount} animations. Rendering may take longer than the video duration.`);
     const renderSeconds = await captureFrames(page, animations, options, framesDirectory, log);
     return { animationCount, renderSeconds };
-  } finally {
-    // Closing the browser also releases its contexts and animation handles.
-    // The outer render() finally cleans up frames even if closing Chrome fails.
-    await browser.close();
-  }
+  }, () => browser.close(), message => log(message, { type: 'warning' }));
 }
 
 async function preparePage(page: Page, source: string): Promise<JSHandle<Animation[]>> {
@@ -111,7 +112,9 @@ async function captureFrames(
     });
     if ((frame + 1) % fps === 0 || frame + 1 === frameCount) {
       // The queue worker parses this message to report progress.
-      log(`Rendered ${frame + 1}/${frameCount} frames`);
+      log(`Rendered ${frame + 1}/${frameCount} frames`, {
+        type: 'progress', phase: 'rendering', framesRendered: frame + 1, totalFrames: frameCount,
+      });
     }
   }
   return (performance.now() - started) / 1000;

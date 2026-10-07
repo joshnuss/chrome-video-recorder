@@ -1,0 +1,59 @@
+<!doctype html>
+<title>Animation frame render</title>
+        <style>
+          * { box-sizing: border-box; }
+          body {
+            margin: 0; padding: 48px 64px; font: 20px system-ui;
+            background: #101827; color: #eef3ff;
+          }
+          h1 { margin: 0 0 12px; }
+          p { color: #aebcd3; }
+          .demos { display: grid; gap: 20px; margin: 32px 0; }
+          .demo { padding: 20px; border: 1px solid #36445c; border-radius: 16px; }
+          .label { margin-bottom: 16px; font-size: 16px; color: #aebcd3; }
+          .track { height: 48px; position: relative; container-type: inline-size; }
+          .ball {
+            position: absolute; width: 48px; height: 48px;
+            border-radius: 50%; background: #65e4cf;
+            animation: travel 3s ease-in-out infinite alternate;
+          }
+          .shapes { display: flex; align-items: center; gap: 80px; height: 80px; }
+          .spinner {
+            width: 56px; height: 56px; border: 8px solid #36445c;
+            border-top-color: #b59aff; border-radius: 50%;
+            animation: spin 1s linear infinite;
+          }
+          .pulse {
+            width: 48px; height: 48px; background: #ffbc70; border-radius: 12px;
+            animation: pulse 2s ease-in-out infinite alternate;
+          }
+          button {
+            padding: 12px 20px; border: 0; border-radius: 8px;
+            font: inherit; cursor: pointer; background: #65e4cf; color: #101827;
+          }
+          @keyframes travel {
+            from { transform: translateX(0); }
+            to { transform: translateX(calc(100cqw - 48px)); }
+          }
+          @keyframes spin { to { transform: rotate(360deg); } }
+          @keyframes pulse {
+            from { transform: scale(0.7); opacity: 0.35; }
+            to { transform: scale(1.3); opacity: 1; }
+          }
+        html:not(.ready) * { animation-play-state: paused !important; }
+        </style>
+        <body>
+          <h1>Rendering animation frames</h1>
+          <p>Animation frame render · Each frame is sampled at an exact animation time.</p>
+          <div class="demos">
+            <div class="demo">
+              <div class="label">Ease in and out · 3 seconds each way</div>
+              <div class="track"><div class="ball"></div></div>
+            </div>
+            <div class="demo">
+              <div class="label">Rotation · 1 second / Scale and opacity · 4 seconds</div>
+              <div class="shapes"><div class="spinner"></div><div class="pulse"></div></div>
+            </div>
+          </div>
+          <button onclick="this.textContent = 'Clicked!'">Try clicking me</button>
+        </body>

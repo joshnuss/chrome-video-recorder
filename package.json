@@ -1,0 +1,34 @@
+{
+  "name": "chrome-video-recorder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Render CSS animation timelines into video, one frame at a time",
+  "type": "module",
+  "bin": {
+    "chrome-video-recorder": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173 --strictPort --open /demo.html",
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "render": "node dist/cli.js",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "chrome-video-recorder": "link:",
+    "playwright": "^1.56.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.0.0"
+  }
+}

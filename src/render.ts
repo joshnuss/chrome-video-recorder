@@ -21,22 +21,35 @@ interface CaptureResult {
   renderSeconds: number;
 }
 
-export async function render(options: RenderOptions, log: Logger = createLogger(false)): Promise<string> {
+export async function render(options: RenderOptions, log: Logger = createLogger(false), signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   checkDependencies();
   const files = await createOutputPaths(options.output);
 
   const output = await withCleanup(async () => {
-    const capture = await captureWithChrome(options, files.framesDirectory, log);
+    const capture = await captureWithChrome(options, files.framesDirectory, log, signal);
     log(`Captured all ${options.frames} frames in ${capture.renderSeconds.toFixed(1)}s. Encoding...`, {
       type: 'progress', phase: 'encoding', framesRendered: options.frames, totalFrames: options.frames,
     });
+    signal?.throwIfAborted();
     const encodingStarted = performance.now();
-    await encode(files.framesDirectory, options.frames, options.fps, files.video);
+    await encode(files.framesDirectory, options.frames, options.fps, files.video, signal);
     const encodingSeconds = (performance.now() - encodingStarted) / 1000;
     await writeReport(options, files.report, capture, encodingSeconds);
+    signal?.throwIfAborted();
     return files.video;
-  }, () => cleanupFrames(files.framesDirectory, options.keepFrames, log),
+  }, async () => {
+    await withCleanup(
+      () => cleanupFrames(files.framesDirectory, options.keepFrames, log),
+      async () => {
+        if (signal?.aborted) {
+          await Promise.all([files.video, files.report].map(path => rm(path, { force: true })));
+        }
+      }, message => log(message, { type: 'warning' }),
+    );
+  },
   message => log(message, { type: 'warning' }));
+  signal?.throwIfAborted();
   log(`Saved video: ${output}`, { type: 'completed', output });
   return output;
 }
@@ -58,24 +71,42 @@ async function createOutputPaths(outputDirectory: string): Promise<OutputPaths> 
 }
 
 async function captureWithChrome(
-  options: RenderOptions, framesDirectory: string, log: Logger,
+  options: RenderOptions, framesDirectory: string, log: Logger, signal?: AbortSignal,
 ): Promise<CaptureResult> {
-  const browser = await chromium.launch({ channel: 'chrome', headless: !options.headed });
+  signal?.throwIfAborted();
+  const browser = await chromium.launch({
+    channel: 'chrome', headless: !options.headed,
+    handleSIGINT: false, handleSIGTERM: false,
+  });
+  let closing: Promise<void> | undefined;
+  const closeBrowser = () => closing ??= browser.close();
+  const abort = () => { void closeBrowser().catch(() => {}); };
+  signal?.addEventListener('abort', abort, { once: true });
   return withCleanup(async () => {
-    const context = await browser.newContext({
-      viewport: { width: options.width, height: options.height }, deviceScaleFactor: 1,
-    });
-    const page = await context.newPage();
-    const animations = await preparePage(page, options.source);
-    const animationCount = await animations.evaluate(animations => animations.length);
-    if (!animationCount) log('No animations found in the main document; the output may be static.', { type: 'warning' });
-    log(`Rendering ${options.frames} frames: ${options.width} × ${options.height}, ${options.fps} FPS, ${(options.frames / options.fps).toFixed(3)}s video.`, {
-      type: 'progress', phase: 'starting', framesRendered: 0, totalFrames: options.frames,
-    });
-    log(`Seeking ${animationCount} animations. Rendering may take longer than the video duration.`);
-    const renderSeconds = await captureFrames(page, animations, options, framesDirectory, log);
-    return { animationCount, renderSeconds };
-  }, () => browser.close(), message => log(message, { type: 'warning' }));
+    try {
+      signal?.throwIfAborted();
+      const context = await browser.newContext({
+        viewport: { width: options.width, height: options.height }, deviceScaleFactor: 1,
+      });
+      const page = await context.newPage();
+      const animations = await preparePage(page, options.source);
+      const animationCount = await animations.evaluate(animations => animations.length);
+      if (!animationCount) log('No animations found in the main document; the output may be static.', { type: 'warning' });
+      log(`Rendering ${options.frames} frames: ${options.width} × ${options.height}, ${options.fps} FPS, ${(options.frames / options.fps).toFixed(3)}s video.`, {
+        type: 'progress', phase: 'starting', framesRendered: 0, totalFrames: options.frames,
+      });
+      log(`Seeking ${animationCount} animations. Rendering may take longer than the video duration.`);
+      const renderSeconds = await captureFrames(page, animations, options, framesDirectory, log, signal);
+      return { animationCount, renderSeconds };
+    } catch (error) {
+      // Closing Chrome interrupts pending navigation/evaluation/screenshot calls.
+      signal?.throwIfAborted();
+      throw error;
+    }
+  }, async () => {
+    try { await closeBrowser(); }
+    finally { signal?.removeEventListener('abort', abort); }
+  }, message => log(message, { type: 'warning' }));
 }
 
 async function preparePage(page: Page, source: string): Promise<JSHandle<Animation[]>> {
@@ -97,11 +128,12 @@ async function preparePage(page: Page, source: string): Promise<JSHandle<Animati
 
 async function captureFrames(
   page: Page, animations: JSHandle<Animation[]>, options: RenderOptions,
-  framesDirectory: string, log: Logger,
+  framesDirectory: string, log: Logger, signal?: AbortSignal,
 ): Promise<number> {
   const { frames: frameCount, fps } = options;
   const started = performance.now();
   for (let frame = 0; frame < frameCount; frame++) {
+    signal?.throwIfAborted();
     await animations.evaluate((animations, timeMs) => {
       for (const animation of animations) animation.currentTime = timeMs;
       // Flush styles/layout before capturing the paused timeline state.

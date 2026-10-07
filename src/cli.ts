@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { parseOptions } from './options.js';
 import { createLogger } from './progress.js';
+import { installSignalHandlers, RenderCancelled } from './signals.js';
 
 const help = `Usage: chrome-video-recorder --url <URL> [options]
        chrome-video-recorder <URL | HTML_FILE> [options]
@@ -52,13 +53,18 @@ try {
       }, null, 2));
     } else {
       // Help, version, validation and dry-run do not load Playwright.
-      const { render } = await import('./render.js');
-      const output = await render(parsed.options, log);
-      // Progress goes to stderr; stdout contains only the finished video path.
-      console.log(output);
+      const cancellation = installSignalHandlers();
+      try {
+        const { render } = await import('./render.js');
+        const output = await render(parsed.options, log, cancellation.signal);
+        // Progress goes to stderr; stdout contains only the finished video path.
+        console.log(output);
+      } finally {
+        cancellation.dispose();
+      }
     }
   }
 } catch (error) {
   log(`chrome-video-recorder: ${error instanceof Error ? error.message : String(error)}`, { type: 'error' });
-  process.exitCode = 1;
+  process.exitCode = error instanceof RenderCancelled ? error.exitCode : 1;
 }

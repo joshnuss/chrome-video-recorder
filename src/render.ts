@@ -1,84 +1,134 @@
-import { chromium } from 'playwright';
+import { chromium, type JSHandle, type Page } from 'playwright';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { encode } from './encode.js';
-
 import type { RenderOptions } from './options.js';
 
-export async function render(options: RenderOptions, log = console.error): Promise<string> {
-  const { width, height, fps, duration, frames: count } = options;
-  const size = { width, height };
+type Logger = (message: string) => void;
+
+interface OutputPaths {
+  video: string;
+  report: string;
+  framesDirectory: string;
+}
+
+interface CaptureResult {
+  animationCount: number;
+  renderSeconds: number;
+}
+
+export async function render(options: RenderOptions, log: Logger = console.error): Promise<string> {
+  checkDependencies();
+  const files = await createOutputPaths(options.output);
+
+  try {
+    const capture = await captureWithChrome(options, files.framesDirectory, log);
+    log(`Captured all ${options.frames} frames in ${capture.renderSeconds.toFixed(1)}s. Encoding...`);
+    const encodingStarted = performance.now();
+    await encode(files.framesDirectory, options.frames, options.fps, files.video);
+    const encodingSeconds = (performance.now() - encodingStarted) / 1000;
+    await writeReport(options, files.report, capture, encodingSeconds);
+    log(`Saved video: ${files.video}`);
+    return files.video;
+  } finally {
+    await cleanupFrames(files.framesDirectory, options.keepFrames, log);
+  }
+}
+
+function checkDependencies(): void {
   if (spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status !== 0) {
     throw new Error('Install system FFmpeg with libvpx-vp9 and make sure ffmpeg is on PATH.');
   }
+}
 
-  const outputDir = options.output;
-  await mkdir(outputDir, { recursive: true });
-  const output = join(outputDir, `${randomUUID()}.webm`);
+async function createOutputPaths(outputDirectory: string): Promise<OutputPaths> {
+  await mkdir(outputDirectory, { recursive: true });
+  const name = randomUUID();
+  return {
+    video: join(outputDirectory, `${name}.webm`),
+    report: join(outputDirectory, `${name}.json`),
+    framesDirectory: await mkdtemp(join(outputDirectory, '.frames-')),
+  };
+}
+
+async function captureWithChrome(
+  options: RenderOptions, framesDirectory: string, log: Logger,
+): Promise<CaptureResult> {
   const browser = await chromium.launch({ channel: 'chrome', headless: !options.headed });
-  let directory: string | undefined;
-
   try {
-    const context = await browser.newContext({ viewport: size, deviceScaleFactor: 1 });
+    const context = await browser.newContext({
+      viewport: { width: options.width, height: options.height }, deviceScaleFactor: 1,
+    });
     const page = await context.newPage();
-    await page.goto(options.source, { waitUntil: 'load' });
-    await page.evaluate(async () => {
-      await document.fonts.ready;
-      await Promise.all(Array.from(document.images, image => image.decode().catch(() => {})));
-    });
-
-    // Keep references: finished animations may disappear from getAnimations(),
-    // but their timelines still need seeking on subsequent frames.
-    const animations = await page.evaluateHandle(async () => {
-      const animations = document.getAnimations();
-      for (const animation of animations) animation.pause();
-      await Promise.all(animations.map(animation => animation.ready));
-      for (const animation of animations) animation.currentTime = 0;
-      return animations;
-    });
+    const animations = await preparePage(page, options.source);
     const animationCount = await animations.evaluate(animations => animations.length);
     if (!animationCount) log('No animations found in the main document; the output may be static.');
-
-    directory = await mkdtemp(join(outputDir, '.frames-'));
-    log(`Rendering ${count} frames: ${size.width} × ${size.height}, ${fps} FPS, ${(count / fps).toFixed(3)}s video.`);
+    log(`Rendering ${options.frames} frames: ${options.width} × ${options.height}, ${options.fps} FPS, ${(options.frames / options.fps).toFixed(3)}s video.`);
     log(`Seeking ${animationCount} animations. Rendering may take longer than the video duration.`);
-    const started = performance.now();
-    for (let frame = 0; frame < count; frame++) {
-      const timeMs = frame * 1000 / fps;
-      await animations.evaluate((animations, time) => {
-        for (const animation of animations) animation.currentTime = time;
-        // Flush styles/layout; screenshots then capture the paused timeline state.
-        document.documentElement.getBoundingClientRect();
-      }, timeMs);
-      await page.screenshot({
-        path: join(directory, `frame-${String(frame).padStart(8, '0')}.png`),
-        type: 'png', animations: 'allow', caret: 'hide',
-      });
-      if ((frame + 1) % fps === 0 || frame + 1 === count) {
-        log(`Rendered ${frame + 1}/${count} frames`);
-      }
-    }
-    const renderSeconds = (performance.now() - started) / 1000;
-    await context.close();
-    await browser.close();
-    log(`Captured all ${count} frames in ${renderSeconds.toFixed(1)}s. Encoding...`);
-    const encodingStarted = performance.now();
-    await encode(directory, count, fps, output);
-    await writeFile(output.replace(/\.webm$/, '.json'), JSON.stringify({
-      ...size, fps, requestedDuration: duration, duration: count / fps,
-      frames: count, animations: animationCount, renderSeconds,
-      encodingSeconds: (performance.now() - encodingStarted) / 1000,
-      firstSampleMs: 0, lastSampleMs: (count - 1) * 1000 / fps,
-    }, null, 2) + '\n');
-    log(`Saved video: ${output}`);
-    return output;
+    const renderSeconds = await captureFrames(page, animations, options, framesDirectory, log);
+    return { animationCount, renderSeconds };
   } finally {
+    // Closing the browser also releases its contexts and animation handles.
+    // The outer render() finally cleans up frames even if closing Chrome fails.
     await browser.close();
-    if (directory) {
-      if (options.keepFrames) log(`PNG frames: ${directory}`);
-      else await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function preparePage(page: Page, source: string): Promise<JSHandle<Animation[]>> {
+  await page.goto(source, { waitUntil: 'load' });
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await Promise.all(Array.from(document.images, image => image.decode().catch(() => {})));
+  });
+
+  // Retain references: finished animations can disappear from getAnimations().
+  return page.evaluateHandle(async () => {
+    const animations = document.getAnimations();
+    for (const animation of animations) animation.pause();
+    await Promise.all(animations.map(animation => animation.ready));
+    for (const animation of animations) animation.currentTime = 0;
+    return animations;
+  });
+}
+
+async function captureFrames(
+  page: Page, animations: JSHandle<Animation[]>, options: RenderOptions,
+  framesDirectory: string, log: Logger,
+): Promise<number> {
+  const { frames: frameCount, fps } = options;
+  const started = performance.now();
+  for (let frame = 0; frame < frameCount; frame++) {
+    await animations.evaluate((animations, timeMs) => {
+      for (const animation of animations) animation.currentTime = timeMs;
+      // Flush styles/layout before capturing the paused timeline state.
+      document.documentElement.getBoundingClientRect();
+    }, frame * 1000 / fps);
+    await page.screenshot({
+      path: join(framesDirectory, `frame-${String(frame).padStart(8, '0')}.png`),
+      type: 'png', animations: 'allow', caret: 'hide',
+    });
+    if ((frame + 1) % fps === 0 || frame + 1 === frameCount) {
+      // The queue worker parses this message to report progress.
+      log(`Rendered ${frame + 1}/${frameCount} frames`);
     }
   }
+  return (performance.now() - started) / 1000;
+}
+
+async function writeReport(
+  options: RenderOptions, reportPath: string, capture: CaptureResult, encodingSeconds: number,
+): Promise<void> {
+  const { width, height, fps, duration, frames: frameCount } = options;
+  await writeFile(reportPath, JSON.stringify({
+    width, height, fps, requestedDuration: duration, duration: frameCount / fps,
+    frames: frameCount, animations: capture.animationCount, renderSeconds: capture.renderSeconds,
+    encodingSeconds, firstSampleMs: 0, lastSampleMs: (frameCount - 1) * 1000 / fps,
+  }, null, 2) + '\n');
+}
+
+async function cleanupFrames(framesDirectory: string, keepFrames: boolean, log: Logger): Promise<void> {
+  if (keepFrames) log(`PNG frames: ${framesDirectory}`);
+  else await rm(framesDirectory, { recursive: true, force: true });
 }

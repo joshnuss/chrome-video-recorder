@@ -2,6 +2,10 @@
 
 Record browser and outputs high-quality video.
 
+## Sponsors
+
+This project is sponsored by [Craft Roulette](http://craftroulette.live)
+
 ## Features
 
 - 4K support.

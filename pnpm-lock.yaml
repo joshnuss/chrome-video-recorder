@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      chrome-video-recorder:
-        specifier: 'link:'
-        version: 'link:'
       playwright:
         specifier: ^1.56.0
         version: 1.63.0

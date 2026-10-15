@@ -25,11 +25,7 @@ It seeks animations to exact timestamps and captures every frame, so a 10-second
 Requires Node.js 20.19–20.x or 22.12+, Google Chrome, and FFmpeg with `libvpx-vp9`.
 
 ```sh
-gh clone joshnuss/chrome-video-recorder
-cd chrome-video-recorder
-pnpm install
-pnpm run build
-npm link
+npm install chrome-video-recorder
 ```
 
 ## Usage
@@ -76,6 +72,18 @@ chrome-video-recorder \
   controlled. JavaScript timers, canvas/WebGL, video, animated images, iframes,
   scroll-driven animations, and animations created later are not synchronized.
 - No audio is recorded.
+
+## Development Usage
+
+Link to local binary
+
+```sh
+gh clone joshnuss/chrome-video-recorder
+cd chrome-video-recorder
+pnpm install
+pnpm run build
+npm link
+```
 
 ## License
 

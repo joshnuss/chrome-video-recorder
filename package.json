@@ -1,7 +1,7 @@
 {
   "name": "chrome-video-recorder",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "description": "Render CSS animation timelines into video, one frame at a time",
   "type": "module",
   "bin": {
